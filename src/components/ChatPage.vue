@@ -160,12 +160,21 @@ function isImageMessage(message) {
 
 function formatTimestamp(ts) {
   if (!ts) return '';
-  
+
   // Handle all possible timestamp formats:
-  const date = ts.toDate?.() ||          // Firestore Timestamp
-               new Date(ts.seconds * 1000) ||  // Raw { seconds, nanoseconds } object
-               new Date(ts);             // Fallback (JS Date or ISO string)
+  let date;
   
+  if (ts?.toDate) { // Firestore Timestamp object
+    date = ts.toDate();
+  } else if (ts?.seconds) { // Raw timestamp {seconds: number, nanoseconds: number}
+    date = new Date(ts.seconds * 1000);
+  } else if (ts instanceof Date) { // JS Date object
+    date = ts;
+  } else { // Fallback (shouldn't happen if database is correct)
+    console.warn("Unknown timestamp format:", ts);
+    return '';
+  }
+
   return date.toLocaleTimeString([], { 
     hour: '2-digit', 
     minute: '2-digit' 
