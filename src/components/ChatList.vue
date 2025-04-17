@@ -1,7 +1,7 @@
 <template>
     <div>
       <h1>Page d'accueil</h1>
-      <button @click="goToChat('WjxOiJJJAwtICOCEOv4M')">Aller au chat</button>
+      <button @click="goToChat('WSnAbSFpe0KZMJCkNxZL')">Aller au chat</button>
     </div>
   </template>
   

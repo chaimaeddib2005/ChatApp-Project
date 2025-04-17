@@ -158,26 +158,69 @@ function isImageMessage(message) {
     (message.startsWith('data:image') || /\.(jpeg|jpg|gif|png)$/i.test(message));
 }
 
-// Timestamp formatter
 function formatTimestamp(ts) {
   if (!ts) return '';
-  const date = ts.toDate();
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
+  // Handle all possible timestamp formats:
+  const date = ts.toDate?.() ||          // Firestore Timestamp
+               new Date(ts.seconds * 1000) ||  // Raw { seconds, nanoseconds } object
+               new Date(ts);             // Fallback (JS Date or ISO string)
+  
+  return date.toLocaleTimeString([], { 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
 }
-
-// Load messages by their IDs
+// Corrected message loading function
 async function loadMessagesByIds(ids) {
   const messages = [];
-  for (const id of ids) {
-    const messageDoc = await getDoc(doc(db, 'chatMessages', id));
-    if (messageDoc.exists()) {
-      messages.push({ id: messageDoc.id, ...messageDoc.data() });
+  try {
+    // First verify we have a valid chatId
+    if (!chatId) {
+      console.error("No chatId provided");
+      return;
     }
+
+    // Get the chat document first to verify it exists
+    const chatDoc = await getDoc(doc(db, 'chats', chatId));
+    if (!chatDoc.exists()) {
+      console.error("Chat doesn't exist");
+      return;
+    }
+
+    // Load each message
+    for (const id of ids) {
+      try {
+        // IMPORTANT: Verify the message ID is valid
+        if (!id || typeof id !== 'string') {
+          console.warn("Invalid message ID:", id);
+          continue;
+        }
+
+        const messageDoc = await getDoc(doc(db, 'chatMessages', id));
+        if (messageDoc.exists()) {
+          const messageData = messageDoc.data();
+          messages.push({
+            id: messageDoc.id,
+            ...messageData,
+            // Ensure timestamp is properly converted
+            timestamp: messageData.timestamp?.toDate?.() || new Date()
+          });
+        }
+      } catch (error) {
+        console.error(`Error loading message ${id}:`, error);
+      }
+    }
+
+    // Sort messages by timestamp (oldest first)
+    messages.sort((a, b) => a.timestamp - b.timestamp);
+    messageList.value = messages;
+  } catch (error) {
+    console.error("Error loading messages:", error);
   }
-  messageList.value = messages;
 }
 
-// Send message (text or image)
+// Send message (updated for your structure)
 async function sendCombinedMessage() {
   const text = newMessage.value.trim();
   const image = previewUrl.value;
@@ -185,34 +228,27 @@ async function sendCombinedMessage() {
   if (!text && !image) return;
 
   try {
-    const chatDoc = await getDoc(doc(db, 'chats', chatId));
-    if (!chatDoc.exists()) {
-      console.error('Chat not found');
-      return;
-    }
-
-    const chatData = chatDoc.data();
-    const otherUser = chatData.user1 === currentUser?.uid ? chatData.user2 : chatData.user1;
-
+    // 1. Add the new message to chatMessages collection
     const messageData = {
       sender: currentUser?.uid,
-      receiver: otherUser,
       message: image || text,
       timestamp: serverTimestamp(),
+      chatId: chatId // Important: reference which chat this belongs to
     };
 
     const newMsgRef = await addDoc(collection(db, 'chatMessages'), messageData);
 
+    // 2. Update the chats document with the new message reference
     await updateDoc(doc(db, 'chats', chatId), {
       messages: arrayUnion(newMsgRef.id),
+      lastUpdated: serverTimestamp()
     });
 
-    // Clear input fields and typing status
+    // 3. Clear inputs and typing status
     newMessage.value = '';
     previewUrl.value = '';
     
-    // Clear typing indicator
-    if (currentUser && otherUserId) {
+    if (currentUser) {
       const rtdb = getDatabase();
       const typingRef = dbRef(rtdb, `status/${currentUser.uid}/typing`);
       set(typingRef, false);
