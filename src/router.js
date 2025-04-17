@@ -5,7 +5,10 @@ import WelcomingPage from './components/WelcomingPage.vue';
 import HomeView from './components/HomeView.vue';
 import ChatPage from './components/ChatPage.vue';
 const routes = [
-  { path: '/',name: 'Welcoming', component: WelcomingPage },
+  { path: '/',
+    name: 'Welcoming', 
+    component: WelcomingPage
+   },
   
   { path: '/register', name: 'RegisterPage',component: RegisterPage,},
   { path: '/login', component:LoginPage },
@@ -15,11 +18,12 @@ const routes = [
     component: HomeView,
   },
   {
-    path: '/chat/:user1/:user2',
+    path: '/chat/:chatId',
     name: 'ChatPage',
     component: ChatPage,
-    props: true  // Permet de passer les paramètres de l'URL comme props dans le composant
+    props:true
   }
+  
   
 ];
 

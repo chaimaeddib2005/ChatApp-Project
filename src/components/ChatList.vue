@@ -1,7 +1,7 @@
 <template>
     <div>
       <h1>Page d'accueil</h1>
-      <button @click="goToChat('YZmtqeT5SWtoJ1usWaCu', 'NVpBtbGsqjMMyylcq7BmqNOWaZy2')">Aller au chat</button>
+      <button @click="goToChat('WjxOiJJJAwtICOCEOv4M')">Aller au chat</button>
     </div>
   </template>
   
@@ -10,8 +10,8 @@
   
   const router = useRouter();
   
-  function goToChat(user1, user2) {
-    router.push({ name: 'ChatPage', params: { user1, user2 } });
+  function goToChat(chatId) {
+    console.log("Clicked!", chatId); 
+    router.push(`/chat/${chatId}`);
   }
   </script>
-  
