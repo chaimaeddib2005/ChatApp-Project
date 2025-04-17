@@ -1,57 +1,56 @@
 <template>
-    <div class="container">
-      <ul>
-        <li
-          v-for="msg in messageList"
-          :key="msg.id"
-          :class="msg.sender === currentUser?.uid ? 'sent' : 'received'"
-        >
-          <div v-if="isImageMessage(msg.message)">
-            <img :src="msg.message" alt="Image" class="chat-image" />
-          </div>
-          <div v-else>
-            {{ msg.message }}
-          </div>
-          <small class="timestamp">{{ formatTimestamp(msg.timestamp) }}</small>
-        </li>
-
-      </ul>
-      <div class="input-area">
-          <input type="text" v-model="newMessage">
-        <button @click.prevent="sendCombinedMessage">
-              <i class="fas fa-paper-plane"></i>
-        </button>
-        <div @drop.prevent="onDrop" @dragover.prevent>
+  <div class="container">
+    <small v-if="otherUserId" class="status-indicator">
+      {{ otherUserStatus === 'online' ? 'Online' : 'Offline' }}
+      <span v-if="isOtherUserTyping"> (typing...)</span>
+    </small>
+    <ul>
+      <li
+        v-for="msg in messageList"
+        :key="msg.id"
+        :class="msg.sender === currentUser?.uid ? 'sent' : 'received'"
+      >
+        <div v-if="isImageMessage(msg.message)">
+          <img :src="msg.message" alt="Image" class="chat-image" />
+        </div>
+        <div v-else>
+          {{ msg.message }}
+        </div>
+        <small class="timestamp">{{ formatTimestamp(msg.timestamp) }}</small>
+      </li>
+    </ul>
+    <div class="input-area">
+      <input 
+        type="text" 
+        v-model="newMessage"
+        @input="handleTyping"
+        @keyup.enter="sendCombinedMessage"
+      >
+      <button @click.prevent="sendCombinedMessage">
+        <i class="fas fa-paper-plane"></i>
+      </button>
+      <div @drop.prevent="onDrop" @dragover.prevent>
         <input
-        type="file"
-        ref="fileInput"
-        accept="image/*"
-        @change="onFileChange"
-        style="display: none"
+          type="file"
+          ref="fileInput"
+          accept="image/*"
+          @change="onFileChange"
+          style="display: none"
         />
         <div v-if="previewUrl" class="image-preview">
           <img :src="previewUrl" alt="Preview" class="chat-image" />
         </div>
-
-      <!-- Custom upload button -->
         <button @click="$refs.fileInput.click()" class="icon-button">
           <i class="fas fa-image"></i>
         </button>
-
       </div>
-
-      </div>
-
-     
-      
-
-      
-
-    </div>
-  </template>
+    </div> 
+  </div>
+</template>
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { getDatabase, ref as dbRef, set, onDisconnect, onValue, off } from 'firebase/database';
 import { useRoute } from 'vue-router';
 import { getAuth } from 'firebase/auth';
 import {
@@ -77,6 +76,81 @@ const newMessage = ref('');
 const messageList = ref([]);
 const previewUrl = ref('');
 const fileInput = ref(null);
+const otherUserStatus = ref('offline');
+const isOtherUserTyping = ref(false);
+let typingTimeout = null;
+let otherUserId = null;
+let unsubscribeStatus = null;
+let unsubscribeTyping = null;
+
+// Presence System Setup
+const setupPresence = async () => {
+  const rtdb = getDatabase();
+  const user = currentUser;
+  if (!user) return;
+
+  // Get chat data to determine the other user
+  const chatDoc = await getDoc(doc(db, 'chats', chatId));
+  if (!chatDoc.exists()) return;
+
+  const chatData = chatDoc.data();
+  otherUserId = chatData.user1 === user.uid ? chatData.user2 : chatData.user1;
+
+  // Current user's status reference
+  const userStatusRef = dbRef(rtdb, `status/${user.uid}`);
+  const userStatusConnectedRef = dbRef(rtdb, '.info/connected');
+  
+  // Other user's status reference
+  const otherUserStatusRef = dbRef(rtdb, `status/${otherUserId}`);
+  const otherUserTypingRef = dbRef(rtdb, `status/${otherUserId}/typing`);
+
+  // Monitor connection state
+  onValue(userStatusConnectedRef, (snap) => {
+    if (snap.val() === true) {
+      // User is connected
+      set(userStatusRef, {
+        state: 'online',
+        last_changed: serverTimestamp(),
+      });
+
+      // Setup disconnect handler
+      onDisconnect(userStatusRef).set({
+        state: 'offline',
+        last_changed: serverTimestamp(),
+      });
+    }
+  });
+
+  // Monitor other user's status
+  unsubscribeStatus = onValue(otherUserStatusRef, (snapshot) => {
+    const status = snapshot.val();
+    otherUserStatus.value = status?.state || 'offline';
+  });
+
+  // Monitor other user's typing status
+  unsubscribeTyping = onValue(otherUserTypingRef, (snapshot) => {
+    isOtherUserTyping.value = snapshot.val() || false;
+  });
+};
+
+// Typing indicator handler
+const handleTyping = () => {
+  if (!currentUser || !otherUserId) return;
+  
+  const rtdb = getDatabase();
+  const typingRef = dbRef(rtdb, `status/${currentUser.uid}/typing`);
+  
+  // Set typing to true
+  set(typingRef, true);
+  
+  // Clear any existing timeout
+  if (typingTimeout) clearTimeout(typingTimeout);
+  
+  // Set timeout to set typing to false after 3 seconds of inactivity
+  typingTimeout = setTimeout(() => {
+    set(typingRef, false);
+  }, 3000);
+};
 
 // Image check helper
 function isImageMessage(message) {
@@ -133,9 +207,16 @@ async function sendCombinedMessage() {
       messages: arrayUnion(newMsgRef.id),
     });
 
-    // Clear input fields
+    // Clear input fields and typing status
     newMessage.value = '';
     previewUrl.value = '';
+    
+    // Clear typing indicator
+    if (currentUser && otherUserId) {
+      const rtdb = getDatabase();
+      const typingRef = dbRef(rtdb, `status/${currentUser.uid}/typing`);
+      set(typingRef, false);
+    }
   } catch (error) {
     console.error('Error sending message:', error);
   }
@@ -165,6 +246,8 @@ const convertToBase64 = (file) => {
 // Subscribe to chat updates on mount
 let chatUnsub = null;
 onMounted(async () => {
+  await setupPresence();
+  
   const chatRef = doc(db, 'chats', chatId);
   chatUnsub = onSnapshot(chatRef, (chatSnap) => {
     if (chatSnap.exists()) {
@@ -181,8 +264,24 @@ onMounted(async () => {
 // Cleanup on unmount
 onBeforeUnmount(() => {
   if (chatUnsub) chatUnsub();
+  if (unsubscribeStatus) off(unsubscribeStatus);
+  if (unsubscribeTyping) off(unsubscribeTyping);
+  if (typingTimeout) clearTimeout(typingTimeout);
+  
+  // Set offline status when component unmounts
+  if (currentUser) {
+    const rtdb = getDatabase();
+    const userStatusRef = dbRef(rtdb, `status/${currentUser.uid}`);
+    set(userStatusRef, {
+      state: 'offline',
+      last_changed: serverTimestamp(),
+    });
+  }
 });
 </script>
+
+
+
 
 
   <style scoped>
