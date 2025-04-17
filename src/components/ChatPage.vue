@@ -2,18 +2,50 @@
     <div class="container">
       <h2>Chat between {{ user1 }} and {{ user2 }}</h2>
       <ul>
-        <li v-for="msg in messageList" :key="msg.message" :class="msg.sender === currentUser?.uid ? 'sent' : 'received'">
-          {{ msg.message }}
+        <li
+          v-for="msg in messageList"
+          :key="msg.id"
+          :class="msg.sender === currentUser?.uid ? 'sent' : 'received'"
+        >
+          <div v-if="isImageMessage(msg.message)">
+            <img :src="msg.message" alt="Image" class="chat-image" />
+          </div>
+          <div v-else>
+            {{ msg.message }}
+          </div>
           <small class="timestamp">{{ formatTimestamp(msg.timestamp) }}</small>
         </li>
+
       </ul>
       <div class="input-area">
           <input type="text" v-model="newMessage">
-        <button @click.prevent="sendMessage">
+        <button @click.prevent="sendCombinedMessage">
               <i class="fas fa-paper-plane"></i>
-          </button>
+        </button>
+        <div @drop.prevent="onDrop" @dragover.prevent>
+        <input
+        type="file"
+        ref="fileInput"
+        accept="image/*"
+        @change="onFileChange"
+        style="display: none"
+        />
+        <div v-if="previewUrl" class="image-preview">
+          <img :src="previewUrl" alt="Preview" class="chat-image" />
+        </div>
+
+      <!-- Custom upload button -->
+        <button @click="$refs.fileInput.click()" class="icon-button">
+          <i class="fas fa-image"></i>
+        </button>
 
       </div>
+
+      </div>
+
+     
+      
+
       
 
     </div>
@@ -24,6 +56,11 @@
   import { db } from '../firebase';
   import { useRoute } from 'vue-router';
   import { getAuth } from 'firebase/auth';
+
+  const previewUrl = ref('')
+  const fileInput = ref(null)
+
+ 
   
   const route = useRoute();
   const user1 = route.params.user1;
@@ -52,6 +89,37 @@
   
     return null;
   }
+
+  async function sendCombinedMessage() {
+  const text = newMessage.value.trim();
+  const image = previewUrl.value;
+
+  // prevent sending nothing
+  if (!text && !image) return;
+
+  const messageData = {
+    sender: currentUser?.uid,
+    receiver: currentUser?.uid === user1 ? user2 : user1,
+    message: image || text, // prioritizes image
+    timestamp: serverTimestamp(),
+  };
+  console.log(messageData)
+  console.log(previewUrl)
+  try {
+    const newMsgRef = await addDoc(collection(db, 'chatMessages'), messageData);
+    await updateDoc(doc(db, 'chats', chatId), {
+      messages: arrayUnion(newMsgRef.id),
+    });
+
+    // clear fields
+    newMessage.value = "";
+    previewUrl.value = "";
+  } catch (error) {
+    console.error("Error sending message:", error);
+  }
+}
+
+
   
   async function loadMessagesByIds(ids) {
     const messages = [];
@@ -64,6 +132,12 @@
     messageList.value = messages;
   }
   
+  function isImageMessage(message) {
+  return typeof message === 'string' && (message.startsWith('data:image') || /\.(jpeg|jpg|gif|png)$/.test(message));
+}
+
+
+
   // 👇 Load chat on component mount
   onMounted(async () => {
     chatId = await findChatId(user1, user2);
@@ -90,35 +164,40 @@
     });
   });
   
-  async function sendMessage() {
-    if (!newMessage.value.trim()) return;
-  
-    try {
-      const messageData = {
-        sender: currentUser?.uid,  
-        receiver: currentUser?.uid === user1 ? user2 : user1,  
-        message: newMessage.value,
-        timestamp: serverTimestamp()
-      };
-  
-      const newMsgRef = await addDoc(collection(db, 'chatMessages'), messageData);
-  
-      await updateDoc(doc(db, 'chats', chatId), {
-        messages: arrayUnion(newMsgRef.id)
-      });
-  
-      newMessage.value = "";
-  
-    } catch (error) {
-      console.error("Error sending message:", error);
-    }
-  }
+
   
   function formatTimestamp(ts) {
     if (!ts) return '';
     const date = ts.toDate();
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
+  const onDrop = (e) => {
+    const file = e.dataTransfer.files[0]
+    if (file) convertToBase64(file)
+  }
+  
+  const convertToBase64 = (file) => {
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const base64Image = reader.result
+      previewUrl.value = base64Image
+      
+    }
+    reader.readAsDataURL(file)
+  }
+  const onFileChange = async (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      previewUrl.value = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+};
+
+
+
   
   onBeforeUnmount(() => {
     if (chatUnsub) chatUnsub();
@@ -129,115 +208,140 @@
   <style scoped>
  
  .container {
-    width: 70%;
-    margin: 0 auto;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    background-color: #f5f5f5;
-    border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-  }
- 
-  
-  ul {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0;
-    margin: 0 0 20px 0;
-  }
-  
- 
-  li {
-    list-style: none;
-    margin-bottom: 12px;
-    max-width: 50%;
-    padding: 12px 16px;
-    border-radius: 18px;
-    line-height: 1.4;
-    position: relative;
-    word-wrap: break-word;
-  }
+  width: 100%;
+  max-width: 600px;
+  margin: 40px auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
 
-  .sent {
-    text-align: left;
-    background-color: #49df64;
-    color: white;
-    margin-left: auto;
-    border-bottom-right-radius: 4px;
-  }
-  
+h2 {
+  text-align: center;
+  font-size: 1.5rem;
+  margin-bottom: 16px;
+  color: #333;
+}
 
-  .received {
-    text-align: left;
-    background-color: #e9ecef;
-    color: #333;
-    margin-right: auto;
-    border-bottom-left-radius: 4px;
-  }
-  
+ul {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 10px;
+  margin-bottom: 20px;
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
-  .input-area {
-    display: flex;
-    height: 40px;
-    gap: 10px;
-  }
-  
-  input[type="text"] {
-    flex: 1;
-    border: 1px solid #ddd;
-    border-radius: 15px;
-    outline: none;
-    font-size: 16px;
-    height: 45px;
-    width: 60%;
-    padding: 4px;
-  }
-  
-  input[type="text"]:focus {
-    border-color: #49df64;
-  }
-  
+/* Message bubble */
+li {
+  list-style: none;
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 20px;
+  position: relative;
+  word-wrap: break-word;
+  line-height: 1.5;
+  font-size: 0.95rem;
+  transition: background-color 0.2s;
+}
 
-  button {
-    background-color: #49df64;
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 50px;
-    height: 50px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  
-  button:hover {
-    background-color: #4e9a5c;
-  }
-  
-  button i {
-    font-size: 18px;
-  }
+.sent {
+  align-self: flex-end;
+  background-color: #4caf50;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
 
- 
-  .timestamp {
-    font-size: 0.7rem;
-    opacity: 0.8;
-    margin-top: 4px;
-    display: block;
-    text-align: right;
-  }
-  
-  .sent .timestamp {
-    color: rgba(255, 255, 255, 0.977);
-  }
-  
-  .received .timestamp {
-    color: rgba(0,0,0,0.6);
-    
-  }
+.received {
+  align-self: flex-start;
+  background-color: #f0f0f0;
+  color: #333;
+  border-bottom-left-radius: 4px;
+}
+
+.chat-image {
+  max-width: 100%;
+  border-radius: 10px;
+  margin-top: 6px;
+}
+
+.timestamp {
+  font-size: 0.7rem;
+  margin-top: 4px;
+  opacity: 0.7;
+  text-align: right;
+}
+
+.input-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
+
+input[type="text"] {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 16px;
+  border: 1px solid #ccc;
+  border-radius: 20px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+input[type="text"]:focus {
+  border-color: #4caf50;
+}
+
+button {
+  background-color: #4caf50;
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s ease-in-out;
+}
+
+button:hover {
+  background-color: #43a047;
+}
+
+button i {
+  font-size: 18px;
+}
+
+.icon-button {
+  background-color: #2196f3;
+  margin-left: 4px;
+}
+
+.icon-button:hover {
+  background-color: #1e88e5;
+}
+
+.image-preview {
+  margin-top: 10px;
+  text-align: center;
+}
+
+.image-preview img {
+  max-width: 120px;
+  border-radius: 12px;
+  border: 1px solid #ccc;
+}
+
   
 
   </style>
