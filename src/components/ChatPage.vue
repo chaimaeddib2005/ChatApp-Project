@@ -40,6 +40,9 @@
         />
         <div v-if="previewUrl" class="image-preview">
           <img :src="previewUrl" alt="Preview" class="chat-image" />
+          <button @click="cancelImage" class="cancel-button">
+            <i class="fas fa-times"></i>
+          </button>
         </div>
         <button @click="$refs.fileInput.click()" class="icon-button">
           <i class="fas fa-image"></i>
@@ -158,6 +161,14 @@ const handleTyping = () => {
   typingTimeout = setTimeout(() => {
     set(typingRef, false).catch(e => console.error("Error clearing typing:", e));
   }, 3000);
+};
+
+const cancelImage = () => {
+  previewUrl.value = '';
+  // Clear the file input as well
+  if (fileInput.value) {
+    fileInput.value.value = '';
+  }
 };
 
 function isImageMessage(message) {
@@ -455,11 +466,37 @@ button i {
 .icon-button:hover {
   background-color: #1e88e5;
 }
-
 .image-preview {
+  position: relative;
   margin-top: 10px;
   text-align: center;
 }
+
+.cancel-button {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  background-color: #ff4444;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cancel-button:hover {
+  background-color: #cc0000;
+}
+
+.cancel-button i {
+  font-size: 12px;
+}
+
 
 .image-preview img {
   max-width: 120px;
