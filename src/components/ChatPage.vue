@@ -5,11 +5,25 @@
       {{ otherUserStatus || 'offline' }}
       <span v-if="isOtherUserTyping"> (typing...)</span>
     </small>
+
+    <div v-if="showDeleteModal" class="modal-overlay">
+    <div class="modal">
+      <h3>Delete Message</h3>
+      <p>Are you sure you want to delete this message?</p>
+      <div class="modal-actions">
+        <button @click="confirmDelete" class="confirm-btn">Delete</button>
+        <button @click="cancelDelete" class="cancel-btn">Cancel</button>
+      </div>
+      </div>
+      </div>
+    
     <ul ref="messagesContainer">
       <li
         v-for="msg in messageList"
         :key="msg.id"
         :class="msg.sender === currentUser?.uid ? 'sent' : 'received'"
+        @mouseover="hoveredMessage = msg.id"
+          @mouseleave="hoveredMessage = null"
       >
         <div v-if="isImageMessage(msg.message)">
           <img :src="msg.message" alt="Image" class="chat-image" />
@@ -18,6 +32,14 @@
           {{ msg.message }}
         </div>
         <small class="timestamp">{{ formatTimestamp(msg.timestamp) }}</small>
+        <button 
+        v-if="msg.sender === currentUser?.uid && hoveredMessage === msg.id"
+        @click.stop="deleteMessage(msg.id)"
+        class="delete-button"
+      >
+        <i class="fas fa-trash"></i>
+      </button>
+
       </li>
     </ul>
     <div class="input-area">
@@ -67,6 +89,7 @@ import {
   arrayUnion,
   collection,
   serverTimestamp,
+  deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -84,6 +107,9 @@ const fileInput = ref(null);
 const otherUserStatus = ref('offline');
 const isOtherUserTyping = ref(false);
 const messagesContainer = ref(null);
+const hoveredMessage = ref(null);
+const showDeleteModal = ref(false);
+const messageToDelete = ref(null);
 let typingTimeout = null;
 let otherUserId = null;
 let unsubscribeStatus = null;
@@ -101,6 +127,44 @@ const scrollToBottom = () => {
 
 const goBackToChatList = () => {
   router.push('/chatList');
+};
+
+
+const deleteMessage = (messageId) => {
+messageToDelete.value = messageId;
+showDeleteModal.value = true;
+};
+
+
+const confirmDelete = async () => {
+if (!messageToDelete.value) return;
+
+try {
+  const chatRef = doc(db, 'chats', chatId);
+  const chatDoc = await getDoc(chatRef);
+  
+  if (chatDoc.exists()) {
+    const currentMessages = chatDoc.data().messages || [];
+    const updatedMessages = currentMessages.filter(id => id !== messageToDelete.value);
+    
+    await updateDoc(chatRef, {
+      messages: updatedMessages
+    });
+    
+    await deleteDoc(doc(db, 'chatMessages', messageToDelete.value));
+    
+    
+  }
+} catch (error) {
+  console.error('Error deleting message:', error);
+} finally {
+  cancelDelete();
+}
+};
+
+const cancelDelete = () => {
+showDeleteModal.value = false;
+messageToDelete.value = null;
 };
 
 const setupPresence = async () => {
@@ -510,6 +574,96 @@ button i {
   font-size: 12px;
 }
 
+.delete-button {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background-color: #ff4444;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.delete-button:hover {
+  opacity: 1;
+}
+
+.delete-button i {
+  font-size: 12px;
+}
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background-color: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.modal h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.modal p {
+  margin-bottom: 20px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-btn {
+  background-color: #ff4444;
+  color: white;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 50px;
+}
+
+.confirm-btn:hover {
+  background-color: #cc0000;
+}
+
+.cancel-btn {
+  background-color: #f0f0f0;
+  color: #333;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 50px;
+}
+
+.cancel-btn:hover {
+  background-color: #e0e0e0;
+}
 
 .image-preview img {
   max-width: 120px;
