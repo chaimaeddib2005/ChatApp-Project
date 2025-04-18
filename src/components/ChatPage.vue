@@ -1,7 +1,8 @@
 <template>
   <div class="container">
+    <button @click="goBackToChatList" id="gobackbut">Back to Chat List</button>
     <small v-if="otherUserId" class="status-indicator">
-      {{ otherUserStatus === 'online' ? 'Online' : 'Offline' }}
+      {{ otherUserStatus || 'offline' }}
       <span v-if="isOtherUserTyping"> (typing...)</span>
     </small>
     <ul>
@@ -50,9 +51,10 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue';
-import { getDatabase, ref as dbRef, set, onDisconnect, onValue, off } from 'firebase/database';
+import { getDatabase, ref as dbRef, set, onDisconnect, onValue} from 'firebase/database';
 import { useRoute } from 'vue-router';
 import { getAuth } from 'firebase/auth';
+import { useRouter } from 'vue-router';
 import {
   doc,
   getDoc,
@@ -65,7 +67,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
-// Route & Auth
+const router = useRouter();
 const route = useRoute();
 const chatId = route.params.chatId;
 const auth = getAuth();
@@ -82,77 +84,82 @@ let typingTimeout = null;
 let otherUserId = null;
 let unsubscribeStatus = null;
 let unsubscribeTyping = null;
+let chatUnsub = null;
 
-// Presence System Setup
+const goBackToChatList = () => {
+  router.push('/chatList');
+};
+
 const setupPresence = async () => {
   const rtdb = getDatabase();
   const user = currentUser;
   if (!user) return;
 
-  // Get chat data to determine the other user
-  const chatDoc = await getDoc(doc(db, 'chats', chatId));
-  if (!chatDoc.exists()) return;
+  try {
+    const chatDoc = await getDoc(doc(db, 'chats', chatId));
+    if (!chatDoc.exists()) return;
 
-  const chatData = chatDoc.data();
-  otherUserId = chatData.user1 === user.uid ? chatData.user2 : chatData.user1;
+    const chatData = chatDoc.data();
+    otherUserId = chatData.user1 === user.uid ? chatData.user2 : chatData.user1;
 
-  // Current user's status reference
-  const userStatusRef = dbRef(rtdb, `status/${user.uid}`);
-  const userStatusConnectedRef = dbRef(rtdb, '.info/connected');
-  
-  // Other user's status reference
-  const otherUserStatusRef = dbRef(rtdb, `status/${otherUserId}`);
-  const otherUserTypingRef = dbRef(rtdb, `status/${otherUserId}/typing`);
+    // Current user's status
+    const userStatusRef = dbRef(rtdb, `status/${user.uid}`);
+    const userStatusConnectedRef = dbRef(rtdb, '.info/connected');
+    
+    // Other user's references
+    const otherUserStatusRef = dbRef(rtdb, `status/${otherUserId}`);
+    const otherUserTypingRef = dbRef(rtdb, `status/${otherUserId}/typing`);
 
-  // Monitor connection state
-  onValue(userStatusConnectedRef, (snap) => {
-    if (snap.val() === true) {
-      // User is connected
-      set(userStatusRef, {
-        state: 'online',
-        last_changed: serverTimestamp(),
-      });
+    // Connection state
+    onValue(userStatusConnectedRef, (snap) => {
+      if (snap.val() === true) {
+        set(userStatusRef, {
+          state: 'online',
+          last_changed: serverTimestamp(),
+        }).catch(e => console.error("Error setting status:", e));
 
-      // Setup disconnect handler
-      onDisconnect(userStatusRef).set({
-        state: 'offline',
-        last_changed: serverTimestamp(),
-      });
-    }
-  });
+        onDisconnect(userStatusRef).set({
+          state: 'offline',
+          last_changed: serverTimestamp(),
+        });
+      }
+    });
 
-  // Monitor other user's status
-  unsubscribeStatus = onValue(otherUserStatusRef, (snapshot) => {
-    const status = snapshot.val();
-    otherUserStatus.value = status?.state || 'offline';
-  });
+    // Other user's status
+    unsubscribeStatus = onValue(otherUserStatusRef, (snapshot) => {
+      const status = snapshot.val();
+      otherUserStatus.value = status?.state || 'offline';
+    }, (error) => {
+      console.error("Status listener error:", error);
+    });
 
-  // Monitor other user's typing status
-  unsubscribeTyping = onValue(otherUserTypingRef, (snapshot) => {
-    isOtherUserTyping.value = snapshot.val() || false;
-  });
+    // Typing status
+    unsubscribeTyping = onValue(otherUserTypingRef, (snapshot) => {
+      isOtherUserTyping.value = snapshot.val() || false;
+    }, (error) => {
+      console.error("Typing listener error:", error);
+    });
+
+  } catch (error) {
+    console.error("Error setting up presence:", error);
+  }
 };
 
-// Typing indicator handler
 const handleTyping = () => {
   if (!currentUser || !otherUserId) return;
   
   const rtdb = getDatabase();
   const typingRef = dbRef(rtdb, `status/${currentUser.uid}/typing`);
   
-  // Set typing to true
-  set(typingRef, true);
+  set(typingRef, true).catch(e => console.error("Error setting typing:", e));
   
-  // Clear any existing timeout
   if (typingTimeout) clearTimeout(typingTimeout);
   
-  // Set timeout to set typing to false after 3 seconds of inactivity
   typingTimeout = setTimeout(() => {
-    set(typingRef, false);
+    set(typingRef, false).catch(e => console.error("Error clearing typing:", e));
   }, 3000);
 };
 
-// Image check helper
 function isImageMessage(message) {
   return typeof message === 'string' &&
     (message.startsWith('data:image') || /\.(jpeg|jpg|gif|png)$/i.test(message));
@@ -161,16 +168,15 @@ function isImageMessage(message) {
 function formatTimestamp(ts) {
   if (!ts) return '';
 
-  // Handle all possible timestamp formats:
   let date;
   
-  if (ts?.toDate) { // Firestore Timestamp object
+  if (ts?.toDate) {
     date = ts.toDate();
-  } else if (ts?.seconds) { // Raw timestamp {seconds: number, nanoseconds: number}
+  } else if (ts?.seconds) {
     date = new Date(ts.seconds * 1000);
-  } else if (ts instanceof Date) { // JS Date object
+  } else if (ts instanceof Date) {
     date = ts;
-  } else { // Fallback (shouldn't happen if database is correct)
+  } else {
     console.warn("Unknown timestamp format:", ts);
     return '';
   }
@@ -180,27 +186,23 @@ function formatTimestamp(ts) {
     minute: '2-digit' 
   });
 }
-// Corrected message loading function
+
 async function loadMessagesByIds(ids) {
   const messages = [];
   try {
-    // First verify we have a valid chatId
     if (!chatId) {
       console.error("No chatId provided");
       return;
     }
 
-    // Get the chat document first to verify it exists
     const chatDoc = await getDoc(doc(db, 'chats', chatId));
     if (!chatDoc.exists()) {
       console.error("Chat doesn't exist");
       return;
     }
 
-    // Load each message
     for (const id of ids) {
       try {
-        // IMPORTANT: Verify the message ID is valid
         if (!id || typeof id !== 'string') {
           console.warn("Invalid message ID:", id);
           continue;
@@ -212,7 +214,6 @@ async function loadMessagesByIds(ids) {
           messages.push({
             id: messageDoc.id,
             ...messageData,
-            // Ensure timestamp is properly converted
             timestamp: messageData.timestamp?.toDate?.() || new Date()
           });
         }
@@ -221,7 +222,6 @@ async function loadMessagesByIds(ids) {
       }
     }
 
-    // Sort messages by timestamp (oldest first)
     messages.sort((a, b) => a.timestamp - b.timestamp);
     messageList.value = messages;
   } catch (error) {
@@ -229,7 +229,6 @@ async function loadMessagesByIds(ids) {
   }
 }
 
-// Send message (updated for your structure)
 async function sendCombinedMessage() {
   const text = newMessage.value.trim();
   const image = previewUrl.value;
@@ -237,49 +236,42 @@ async function sendCombinedMessage() {
   if (!text && !image) return;
 
   try {
-    // 1. Add the new message to chatMessages collection
     const messageData = {
       sender: currentUser?.uid,
       message: image || text,
       timestamp: serverTimestamp(),
-      chatId: chatId // Important: reference which chat this belongs to
+      chatId: chatId
     };
 
     const newMsgRef = await addDoc(collection(db, 'chatMessages'), messageData);
-
-    // 2. Update the chats document with the new message reference
     await updateDoc(doc(db, 'chats', chatId), {
       messages: arrayUnion(newMsgRef.id),
       lastUpdated: serverTimestamp()
     });
 
-    // 3. Clear inputs and typing status
     newMessage.value = '';
     previewUrl.value = '';
     
     if (currentUser) {
       const rtdb = getDatabase();
       const typingRef = dbRef(rtdb, `status/${currentUser.uid}/typing`);
-      set(typingRef, false);
+      set(typingRef, false).catch(e => console.error("Error clearing typing:", e));
     }
   } catch (error) {
     console.error('Error sending message:', error);
   }
 }
 
-// Drag & drop handler
 const onDrop = (e) => {
   const file = e.dataTransfer.files[0];
   if (file) convertToBase64(file);
 };
 
-// File input handler
 const onFileChange = (e) => {
   const file = e.target.files[0];
   if (file) convertToBase64(file);
 };
 
-// Convert image to base64 for preview
 const convertToBase64 = (file) => {
   const reader = new FileReader();
   reader.onload = () => {
@@ -288,50 +280,62 @@ const convertToBase64 = (file) => {
   reader.readAsDataURL(file);
 };
 
-// Subscribe to chat updates on mount
-let chatUnsub = null;
 onMounted(async () => {
-  await setupPresence();
-  
-  const chatRef = doc(db, 'chats', chatId);
-  chatUnsub = onSnapshot(chatRef, (chatSnap) => {
-    if (chatSnap.exists()) {
-      const chatData = chatSnap.data();
-      const messageIds = chatData.messages || [];
-      loadMessagesByIds(messageIds);
-    } else {
-      console.warn('Chat document does not exist');
-      messageList.value = [];
-    }
-  });
+  try {
+    await setupPresence();
+    
+    const chatRef = doc(db, 'chats', chatId);
+    chatUnsub = onSnapshot(chatRef, (chatSnap) => {
+      if (chatSnap.exists()) {
+        const chatData = chatSnap.data();
+        const messageIds = chatData.messages || [];
+        loadMessagesByIds(messageIds);
+      } else {
+        console.warn('Chat document does not exist');
+        messageList.value = [];
+      }
+    }, (error) => {
+      console.error("Chat listener error:", error);
+    });
+  } catch (error) {
+    console.error("Error initializing chat:", error);
+  }
 });
 
-// Cleanup on unmount
 onBeforeUnmount(() => {
   if (chatUnsub) chatUnsub();
-  if (unsubscribeStatus) off(unsubscribeStatus);
-  if (unsubscribeTyping) off(unsubscribeTyping);
+  
+  if (unsubscribeStatus && typeof unsubscribeStatus === 'function') {
+    try {
+      unsubscribeStatus();
+    } catch (e) {
+      console.warn("Error unsubscribing status:", e);
+    }
+  }
+  
+  if (unsubscribeTyping && typeof unsubscribeTyping === 'function') {
+    try {
+      unsubscribeTyping();
+    } catch (e) {
+      console.warn("Error unsubscribing typing:", e);
+    }
+  }
+  
   if (typingTimeout) clearTimeout(typingTimeout);
   
-  // Set offline status when component unmounts
   if (currentUser) {
     const rtdb = getDatabase();
     const userStatusRef = dbRef(rtdb, `status/${currentUser.uid}`);
     set(userStatusRef, {
       state: 'offline',
       last_changed: serverTimestamp(),
-    });
+    }).catch(e => console.warn("Error setting offline status:", e));
   }
 });
 </script>
 
-
-
-
-
-  <style scoped>
- 
- .container {
+<style scoped>
+.container {
   width: 100%;
   max-width: 600px;
   margin: 40px auto;
@@ -342,12 +346,10 @@ onBeforeUnmount(() => {
   border-radius: 16px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
-
-h2 {
-  text-align: center;
-  font-size: 1.5rem;
-  margin-bottom: 16px;
-  color: #333;
+#gobackbut{
+  width: 150px;
+  height: 35px;
+  border-radius: 10px;
 }
 
 ul {
@@ -361,7 +363,6 @@ ul {
   gap: 10px;
 }
 
-/* Message bubble */
 li {
   list-style: none;
   max-width: 75%;
@@ -466,6 +467,10 @@ button i {
   border: 1px solid #ccc;
 }
 
-  
-
-  </style>
+.status-indicator {
+  display: block;
+  text-align: center;
+  margin: 10px 0;
+  color: #666;
+}
+</style>
