@@ -5,7 +5,7 @@
       {{ otherUserStatus || 'offline' }}
       <span v-if="isOtherUserTyping"> (typing...)</span>
     </small>
-    <ul>
+    <ul ref="messagesContainer">
       <li
         v-for="msg in messageList"
         :key="msg.id"
@@ -53,7 +53,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { getDatabase, ref as dbRef, set, onDisconnect, onValue} from 'firebase/database';
 import { useRoute } from 'vue-router';
 import { getAuth } from 'firebase/auth';
@@ -83,11 +83,21 @@ const previewUrl = ref('');
 const fileInput = ref(null);
 const otherUserStatus = ref('offline');
 const isOtherUserTyping = ref(false);
+const messagesContainer = ref(null);
 let typingTimeout = null;
 let otherUserId = null;
 let unsubscribeStatus = null;
 let unsubscribeTyping = null;
 let chatUnsub = null;
+
+
+const scrollToBottom = () => {
+  nextTick(() => {
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+    }
+  });
+};
 
 const goBackToChatList = () => {
   router.push('/chatList');
@@ -235,6 +245,7 @@ async function loadMessagesByIds(ids) {
 
     messages.sort((a, b) => a.timestamp - b.timestamp);
     messageList.value = messages;
+    scrollToBottom(); 
   } catch (error) {
     console.error("Error loading messages:", error);
   }
@@ -271,6 +282,7 @@ async function sendCombinedMessage() {
   } catch (error) {
     console.error('Error sending message:', error);
   }
+  scrollToBottom();
 }
 
 const onDrop = (e) => {
@@ -308,6 +320,7 @@ onMounted(async () => {
     }, (error) => {
       console.error("Chat listener error:", error);
     });
+    scrollToBottom();
   } catch (error) {
     console.error("Error initializing chat:", error);
   }
