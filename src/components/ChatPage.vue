@@ -1,10 +1,25 @@
 <template>
   <div class="container">
     <button @click="goBackToChatList" id="gobackbut">Back to Chat List</button>
-    <small v-if="otherUserId" class="status-indicator">
-      {{ otherUserStatus || 'offline' }}
-      <span v-if="isOtherUserTyping"> (typing...)</span>
-    </small>
+    <div class="chat-header">
+      <div class="user-info">
+        <img 
+          v-if="otherUserPfp" 
+          :src="otherUserPfp" 
+          alt="Profile picture" 
+          class="profile-picture"
+        >
+        <div v-else class="profile-placeholder">
+          {{ otherUsername.charAt(0) }}
+        </div>
+        <h3>{{ otherUsername }}</h3>
+      </div>
+      <small v-if="otherUserId" class="status-indicator">
+        {{ otherUserStatus || 'offline' }}
+        <span v-if="isOtherUserTyping"> (typing...)</span>
+      </small>
+    </div>
+   
 
     <div v-if="showDeleteModal" class="modal-overlay">
     <div class="modal">
@@ -105,6 +120,8 @@ const messageList = ref([]);
 const previewUrl = ref('');
 const fileInput = ref(null);
 const otherUserStatus = ref('offline');
+const otherUsername = ref('');
+const otherUserPfp = ref(''); // Add this with your other refs
 const isOtherUserTyping = ref(false);
 const messagesContainer = ref(null);
 const hoveredMessage = ref(null);
@@ -166,6 +183,29 @@ const cancelDelete = () => {
 showDeleteModal.value = false;
 messageToDelete.value = null;
 };
+
+async function fetchOtherUserData() {
+  try {
+    const chatDoc = await getDoc(doc(db, 'chats', chatId));
+    if (chatDoc.exists()) {
+      const chatData = chatDoc.data();
+      otherUserId = chatData.user1 === currentUser?.uid ? chatData.user2 : chatData.user1;
+      
+      const userDoc = await getDoc(doc(db, 'users', otherUserId));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        otherUsername.value = userData.name;
+        otherUserPfp.value = userData.pfp; // Assuming 'pfp' is the field name
+        console.log('Fetched user data:', { 
+          name: otherUsername.value, 
+          pfp: otherUserPfp.value 
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching other user data:", error);
+  }
+}
 
 const setupPresence = async () => {
   const rtdb = getDatabase();
@@ -370,7 +410,8 @@ const convertToBase64 = (file) => {
 onMounted(async () => {
   try {
     await setupPresence();
-    
+    await fetchOtherUserData();
+    console.log('User data fetched');
     const chatRef = doc(db, 'chats', chatId);
     chatUnsub = onSnapshot(chatRef, (chatSnap) => {
       if (chatSnap.exists()) {
@@ -438,6 +479,45 @@ onBeforeUnmount(() => {
   width: 150px;
   height: 35px;
   border-radius: 10px;
+}
+.chat-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.profile-picture {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.profile-placeholder {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: #4caf50;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+.chat-header h3 {
+  margin: 0;
+  color: #333;
 }
 
 ul {
